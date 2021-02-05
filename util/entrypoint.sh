@@ -146,7 +146,13 @@ if [ -n "$IFACE" ]; then
 
     # Create dirs
     mkdir -p ${DHCPD_DATA_DIR}
-    mkdir -p $DHCPD_DATA_DIR/run/    
+    mkdir -p $DHCPD_DATA_DIR/run/
+    
+    # Check for pid file, remove if it exists
+    if [ -f "$DHCPD_DATA_DIR/run/dhcpd.pid" ]; then
+      rm -f "$DHCPD_DATA_DIR/run/dhcpd.pid"
+    fi
+        
 
     dhcpd_conf="${DHCPD_DATA_DIR}/dhcpd.conf"
     if [ ! -f "$dhcpd_conf" ]; then
@@ -191,8 +197,7 @@ if [ -n "$IFACE" ]; then
     echo "INTERFACES=$IFACE" >> $DHCPD_DEFAULT
     chmod 755 $DHCPD_DEFAULT
     /etc/init.d/isc-dhcp-server start
-    # nohup /usr/sbin/dhcpd -$DHCPD_PROTOCOL -d -pf "$DHCPD_DATA_DIR/run/dhcpd.pid" -cf "$DHCPD_DATA_DIR/dhcpd.conf" -lf "$DHCPD_DATA_DIR/dhcpd.leases" $IFACE > "$DHCPD_DATA_DIR/dhcpdLastRun.log" &
-	DHCPD_EXIT_CODE=$?
+   	DHCPD_EXIT_CODE=$?
 fi
 
 ## ----- Check exit codes and start webmin -----

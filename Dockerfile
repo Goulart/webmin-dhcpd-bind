@@ -9,8 +9,6 @@ RUN apt-get update \
 
 FROM ubuntu:xenial-20210114
 
-LABEL maintainer="agoulart@protonmail.com"
-
 ENV ROOT_PASSWORD=password \
     WEBMIN_ENABLED=true \
     WEBMIN_INIT_SSL_ENABLED=true \
