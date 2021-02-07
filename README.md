@@ -6,6 +6,8 @@ Based on ubuntu:xenial-20210114 and the excellent work of:
   - sameersbn/bind
   - networkboot/dhcpd
 
+#### Usage
+
 Start: \
   docker run ***[options]*** -v ***base_dir***:/data goulart/webmin-dhcpd-bind:1.2 [***netwkInterfaces***] [--no-dns] [--no-dhcp]
 
@@ -21,11 +23,11 @@ Start examples: \
   - If none given, dhcpd listens on all interfaces
   - If starting dhcpd always use `--net host` (broadcasting does not bridge)
 
-[--no-dns]
-  - Do not start bind9 (DNS server)
+[--no-dns]  Do not start bind9 (DNS server)
 
-[--no-dhcp]
-  - Do not start DHCP server
+[--no-dhcp] Do not start DHCP server
+
+#### Connectivity
 
 Webmin:
   * point browser to https://***[host]***:10000
