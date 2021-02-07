@@ -10,14 +10,55 @@ WEBMIN_INIT_REDIRECT_PORT=${WEBMIN_INIT_REDIRECT_PORT:-10000}
 WEBMIN_INIT_REFERERS=${WEBMIN_INIT_REFERERS:-NONE}
 
 BIND_DATA_DIR=${DATA_DIR}/bind
+BIND_ENABLED=${BIND_ENABLED:-true}
 BIND_EXIT_CODE=0
 
 DHCPD_DATA_DIR=${DATA_DIR}/dhcpd
+DHCPD_ENABLED=${DHCPD_ENABLED:-true}
 DHCPD_PROTOCOL=${DHCPD_PROTOCOL:-4}
 DHCPD_DEFAULT="$DHCPD_DATA_DIR/dhcpdDefaultEnv.sh"
 DHCPD_EXIT_CODE=0
 
+HTTPD_DATA_DIR=${DATA_DIR}/httpd
+HTTPD_ENABLED=${HTTPD_ENABLED:-true}
+
 echo "Variables done..."
+
+# Check arguments
+is_network_interface() {
+    # skip wait-for-interface behavior if found in path
+    if ! which "$1" > /dev/null 2>&1; then
+        # loop until interface is found, or we give up
+        NEXT_WAIT_TIME=1
+        until [ -e "/sys/class/net/$1" ] || [ $NEXT_WAIT_TIME -eq 4 ]; do
+            sleep $(( NEXT_WAIT_TIME++ ))
+            echo "Waiting for interface '$1' to become available... ${NEXT_WAIT_TIME}"
+        done
+        if [ -e "/sys/class/net/$1" ]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+NETW_IFACES=""
+while (( $# )); do
+  case $1 in
+  '--no-dns') BIND_ENABLED=false;;
+  '--no-dhcp') DHCPD_ENABLED=false;;
+  '--no-httpd') HTTPD_ENABLED=false;;
+  *) if is_network_interface $1; then
+       # Prevent the leading space
+       if [ -z "$NETW_IFACES" ]; then
+         NETW_IFACES="$1"
+       else
+         NETW_IFACES="$NETW_IFACES $1"
+       fi
+     else
+       echo "Warning: network interface $1 not found"
+     fi
+  esac
+  shift
+done
 
 ## ----- webmin -----
 create_webmin_data_dir() {
@@ -107,69 +148,59 @@ create_bind_cache_dir() {
   chown root:${BIND_USER} /var/cache/bind
 }
 
-create_pid_dir
-create_bind_data_dir
-create_bind_cache_dir
-
-echo "Starting named..."
-"$(command -v named)" -u ${BIND_USER}
-BIND_EXIT_CODE=$?
+  create_pid_dir
+  create_bind_data_dir
+  create_bind_cache_dir
+if [ "$BIND_ENABLED" == "true" ]; then
+  echo "Starting named..."
+  "$(command -v named)" -u ${BIND_USER}
+  BIND_EXIT_CODE=$?
+fi
 
 ## ----- DHCPd -----
 
-# Single argument to command line is interface name
-if [ $# -eq 1 -a -n "$1" ]; then
-    # skip wait-for-interface behavior if found in path
-    if ! which "$1" >/dev/null; then
-        # loop until interface is found, or we give up
-        NEXT_WAIT_TIME=1
-        until [ -e "/sys/class/net/$1" ] || [ $NEXT_WAIT_TIME -eq 4 ]; do
-            sleep $(( NEXT_WAIT_TIME++ ))
-            echo "Waiting for interface '$1' to become available... ${NEXT_WAIT_TIME}"
-        done
-        if [ -e "/sys/class/net/$1" ]; then
-            IFACE="$1"
-        fi
-    fi
-fi
-
-# No arguments means all interfaces
-if [ -z "$1" ]; then
-    IFACE=" "
-fi
-
-echo "DHCPd bind interface: $IFACE"
-
-if [ -n "$IFACE" ]; then
-    # Run dhcpd for specified interface or all interfaces
-	# DNS bind open on all interfaces
-
+create_dhcp_dirs () {
     # Create dirs
     mkdir -p ${DHCPD_DATA_DIR}
     mkdir -p $DHCPD_DATA_DIR/run/
-    
+}
+
+create_default_dhcp_env_file () {
+    # Build a default DHCPd environment (for isc-dhcp-server start)
+    echo "OPTIONS=-$DHCPD_PROTOCOL" > $DHCPD_DEFAULT
+    echo "DHCPD_PID=$DHCPD_DATA_DIR/run/dhcpd.pid" >> $DHCPD_DEFAULT
+    echo "DHCPD_CONF=$DHCPD_DATA_DIR/dhcpd.conf"  >> $DHCPD_DEFAULT
+    echo "DHCPD_LEASES=$DHCPD_DATA_DIR/dhcpd.leases" >> $DHCPD_DEFAULT
+    echo "INTERFACES=\"$NETW_IFACES\"" >> $DHCPD_DEFAULT
+    chown dhcpd:dhcpd $DHCPD_DEFAULT
+    chmod 755 $DHCPD_DEFAULT
+}
+
+remove_stale_pid_file () {
     # Check for pid file, remove if it exists
     if [ -f "$DHCPD_DATA_DIR/run/dhcpd.pid" ]; then
       rm -f "$DHCPD_DATA_DIR/run/dhcpd.pid"
     fi
-        
+}
 
-    dhcpd_conf="${DHCPD_DATA_DIR}/dhcpd.conf"
-    if [ ! -f "$dhcpd_conf" ]; then
-      BCAST=$(ip -4 addr show $(ls /sys/class/net/ | grep -v lo | head -n 1) | grep -Po 'brd \K[\d.]+')
-      NETAD=$(echo $BCAST | grep -Po '\d+\.\d+\.\d+')
-      echo "option domain-name \"dummy.lan\";" > $dhcpd_conf
-      echo "option broadcast-address $BCAST;" >> $dhcpd_conf
-      echo "subnet $NETAD.0 netmask 255.255.255.0 { range $NETAD.10 $NETAD.100; }" >> $dhcpd_conf
-      echo "host dummy { };" >> $dhcpd_conf
-    fi
-    
-    if [ ! -r "$dhcpd_conf" ]; then
-        echo "Please ensure '$dhcpd_conf' exists and is readable."
-        echo "Run the container with arguments 'man dhcpd.conf' if you need help with creating the configuration."
-        exit 1
-    fi
+create_dummy_dhcp_config () {
+    BCAST=$(ip -4 addr show $1 | grep -Po 'brd \K[\d.]+')
+    NETAD=$(echo $BCAST | grep -Po '\d+\.\d+\.\d+')
+    echo "option domain-name \"dummy.lan\";" > $dhcpd_conf
+    echo "option broadcast-address $BCAST;" >> $dhcpd_conf
+    echo "subnet $NETAD.0 netmask 255.255.255.0 { host dummy { } range $NETAD.10 $NETAD.100; }" >> $dhcpd_conf
+    chown dhcpd:dhcpd $dhcpd_conf
+}
 
+touch_leases_file () {
+    [ -e "$DHCPD_DATA_DIR/dhcpd.leases" ] || touch "$DHCPD_DATA_DIR/dhcpd.leases"
+    chown dhcpd:dhcpd "$DHCPD_DATA_DIR/dhcpd.leases"
+    if [ -e "$DHCPD_DATA_DIR/dhcpd.leases~" ]; then
+        chown dhcpd:dhcpd "$DHCPD_DATA_DIR/dhcpd.leases~"
+    fi
+}
+
+change_user_group_id () {
     uid=$(stat -c%u "$DHCPD_DATA_DIR")
     gid=$(stat -c%g "$DHCPD_DATA_DIR")
     if [ $gid -ne 0 ]; then
@@ -178,44 +209,44 @@ if [ -n "$IFACE" ]; then
     if [ $uid -ne 0 ]; then
         usermod -u $uid dhcpd
     fi
+}
 
-    [ -e "$DHCPD_DATA_DIR/dhcpd.leases" ] || touch "$DHCPD_DATA_DIR/dhcpd.leases"
-    chown dhcpd:dhcpd "$DHCPD_DATA_DIR/dhcpd.leases"
-    if [ -e "$DHCPD_DATA_DIR/dhcpd.leases~" ]; then
-        chown dhcpd:dhcpd "$DHCPD_DATA_DIR/dhcpd.leases~"
+create_dhcp_dirs
+change_user_group_id
+create_default_dhcp_env_file
+touch_leases_file
+remove_stale_pid_file
+
+if [ "$DHCPD_ENABLED" == "true" ]; then
+  echo "DHCPd bind interfaces: $NETW_IFACES"
+
+  dhcpd_conf="${DHCPD_DATA_DIR}/dhcpd.conf"
+  # Check if dhcpd.conf exists, build a dummy one if not
+  if [ ! -f "$dhcpd_conf" ]; then
+    if [ -z "$NETW_IFACES" ]; then
+      echo "Warning: 1st time exec of DHCPd requires at least one network interface: none given."
+      echo "DHCPd not started."
+    else
+      # Get the first interface and use it to build the dummy config
+      IFACE=$(echo $NETW_IFACES | cut -d " " -f1)
+      create_dummy_dhcp_config $IFACE
     fi
-
-    container_id=$(grep docker /proc/self/cgroup | sort -n | head -n 1 | cut -d: -f3 | cut -d/ -f3)
-    if perl -e '($id,$name)=@ARGV;$short=substr $id,0,length $name;exit 1 if $name ne $short;exit 0' $container_id $HOSTNAME; then
-        echo "You must add the 'docker run' option '--net=host' if you want to provide DHCP service to the host network."
-    fi
-
-    echo "OPTIONS=-$DHCPD_PROTOCOL" > $DHCPD_DEFAULT
-    echo "DHCPD_PID=$DHCPD_DATA_DIR/run/dhcpd.pid" >> $DHCPD_DEFAULT
-    echo "DHCPD_CONF=$DHCPD_DATA_DIR/dhcpd.conf"  >> $DHCPD_DEFAULT
-    echo "DHCPD_LEASES=$DHCPD_DATA_DIR/dhcpd.leases" >> $DHCPD_DEFAULT
-    echo "INTERFACES=$IFACE" >> $DHCPD_DEFAULT
-    chmod 755 $DHCPD_DEFAULT
-    /etc/init.d/isc-dhcp-server start
-   	DHCPD_EXIT_CODE=$?
+  fi
+  
+  grep -iq "subnet" ${DHCPD_DATA_DIR}/dhcpd.conf > /dev/null 2>&1 && /etc/init.d/isc-dhcp-server start
+  DHCPD_EXIT_CODE=$?
 fi
 
 ## ----- Check exit codes and start webmin -----
 
-if [ $BIND_EXIT_CODE -ne 0 ]; then
-  echo "Failed to start DNS (bind). Exit code $BIND_EXIT_CODE"
-  exit 1
-elif [ $DHCPD_EXIT_CODE -ne 0 ]; then
-  echo "Failed to start DHCPd. Exit code $DHCPD_EXIT_CODE"
-  exit 1
+[ $BIND_EXIT_CODE -ne 0 ] && echo "Warning: Failed to start DNS (bind). Exit code $BIND_EXIT_CODE"
+[ $DHCPD_EXIT_CODE -ne 0 ] && echo "Warning: Failed to start DHCPd. Exit code $DHCPD_EXIT_CODE"
+if [ "${WEBMIN_ENABLED}" == "true" ]; then
+  create_webmin_data_dir
+  first_init
+  set_root_passwd
+  echo "Starting webmin..."
+  exec /etc/webmin/start
 else
-  if [ "${WEBMIN_ENABLED}" == "true" ]; then
-    create_webmin_data_dir
-    first_init
-    set_root_passwd
-    echo "Starting webmin..."
-    exec /etc/webmin/start
-  else
-    sleep infinity
-  fi
+  sleep infinity
 fi

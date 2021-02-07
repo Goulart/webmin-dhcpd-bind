@@ -1,8 +1,5 @@
 ## webmin-dhcpd-bind
 
-### **WARNING** - very rough - needs refinement and testing
-#### Considered work in progress
-
 ISC (https://kb.isc.org/) DNS (bind9) and DHCP servers in the same container. \
 Managed under https://www.webmin.com \
 Based on ubuntu:xenial-20210114 and the excellent work of:
@@ -10,11 +7,25 @@ Based on ubuntu:xenial-20210114 and the excellent work of:
   - networkboot/dhcpd
 
 Start: \
-  docker run ***[options]*** --net host -v ***base_dir***:/data goulart/webmin-dhcpd-bind:1.0 ***netwkInterface***
+  docker run ***[options]*** -v ***base_dir***:/data goulart/webmin-dhcpd-bind:1.2 [***netwkInterfaces***] [--no-dns] [--no-dhcp]
 
-Start example: \
-  `docker run -d --rm --net host -v /etc/docker:/data:Z webmin-dhcpd-bind:latest eth0` \
+Start examples: \
+  `docker run -d --rm --net host -v /etc/docker:/data:Z webmin-dhcpd-bind:1.2 eth0` \
 (`eth0` is the adapter the DHCPd will bind to)
+
+  `docker run -d --rm -p 53:53/tcp -p 53:53/udp 10000:10000/tcp -v /etc/docker:/data:Z webmin-dhcpd-bind:1.2 --no-dhcp` \
+(Start bind and webmin)
+
+[***netwkInterfaces***] (dhcp only)
+  - More than one network interface may be specified for dhcpd
+  - If none given, dhcpd listens on all interfaces
+  - If starting dhcpd always use `--net host` (broadcasting does not bridge)
+
+[--no-dns]
+  - Do not start bind9 (DNS server)
+
+[--no-dhcp]
+  - Do not start DHCP server
 
 Webmin:
   * point browser to https://***[host]***:10000
@@ -22,10 +33,10 @@ Webmin:
   * password: `password`
 
 Ports:
-  * DNS (bind9):
+  * DNS server (bind9):
     * 53/udp
     * 53/tcp
-  * DHCPd:
+  * DHCP server:
     * 67/udp
     * 68/udp
     * 67/tcp
