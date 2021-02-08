@@ -6,6 +6,9 @@ Based on ubuntu:xenial-20210114 and the excellent work of:
   - sameersbn/bind
   - networkboot/dhcpd
 
+The (unforked) main process is the webmin server.
+If you want to stop the container, just stop the webmin server.
+
 #### Usage
 
 Start: \
